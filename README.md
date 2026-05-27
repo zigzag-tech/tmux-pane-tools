@@ -16,7 +16,7 @@ cd tmux-pane-tools
 ./scripts/install.sh
 ```
 
-The installer links the commands into `~/.local/bin` by default and links this repository as a skill into known agent skill directories when those directories exist.
+The installer links the commands into `~/.local/bin` by default and links this repository as a skill into known agent skill directories, creating those skill directories when needed.
 
 Add `~/.local/bin` to your shell `PATH` if it is not already present:
 
