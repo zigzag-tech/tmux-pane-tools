@@ -22,6 +22,7 @@ If the repository is already cloned, run `./scripts/install.sh` from its root.
 The installer links:
 
 - `bin/layout`, `bin/even-panes`, and `bin/rename` into `~/.local/bin`
+- the install bin directory into target shell startup files with a managed PATH block
 - the repository root into known agent skill directories, including `~/.codex/skills/tmux-pane-tools` and `~/.claude/skills/tmux-pane-tools`, creating those parent directories when needed
 
 After install, verify with:

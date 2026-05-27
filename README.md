@@ -16,13 +16,9 @@ cd tmux-pane-tools
 ./scripts/install.sh
 ```
 
-The installer links the commands into `~/.local/bin` by default and links this repository as a skill into known agent skill directories, creating those skill directories when needed.
+The installer links the commands into `~/.local/bin` by default, adds that directory to target shell startup files with a managed PATH block, and links this repository as a skill into known agent skill directories.
 
-Add `~/.local/bin` to your shell `PATH` if it is not already present:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+Open a new shell after install, or source the updated shell rc file, before using the commands.
 
 ## Commands
 
