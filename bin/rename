@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -z "${TMUX:-}" ]]; then
+  echo "error: not inside a tmux session" >&2
+  exit 1
+fi
+
+name="${1:-$(basename "$PWD")}"
+tmux rename-session "$name"

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: layout <rows>x<cols> | layout <rows> <cols>
+Supported: 1x4, 2x2, 2x3, 3x2, 3x3
+EOF
+  exit 1
+}
+
+if [[ -z "${TMUX:-}" ]]; then
+  echo "error: not inside a tmux session" >&2
+  exit 1
+fi
+
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  script_dir="$(cd -P "$(dirname "$script_path")" >/dev/null 2>&1 && pwd)"
+  script_path="$(readlink "$script_path")"
+  [[ "$script_path" != /* ]] && script_path="${script_dir}/${script_path}"
+done
+script_dir="$(cd -P "$(dirname "$script_path")" >/dev/null 2>&1 && pwd)"
+
+EVEN_PANES="${script_dir}/even-panes"
+if [[ ! -x "$EVEN_PANES" ]]; then
+  echo "error: even-panes not found at $EVEN_PANES" >&2
+  exit 1
+fi
+
+rows=""
+cols=""
+if [[ $# -eq 1 && "$1" =~ ^([0-9]+)[xX]([0-9]+)$ ]]; then
+  rows="${BASH_REMATCH[1]}"
+  cols="${BASH_REMATCH[2]}"
+elif [[ $# -eq 2 ]]; then
+  rows="$1"
+  cols="$2"
+else
+  usage
+fi
+
+if [[ ! "$rows" =~ ^[0-9]+$ || ! "$cols" =~ ^[0-9]+$ ]]; then
+  usage
+fi
+
+valid=0
+for layout in "1 4" "2 2" "2 3" "3 2" "3 3"; do
+  if [[ "$layout" == "$rows $cols" ]]; then
+    valid=1
+    break
+  fi
+done
+
+if [[ $valid -eq 0 ]]; then
+  echo "error: unsupported layout ${rows}x${cols}" >&2
+  echo "Supported: 1x4, 2x2, 2x3, 3x2, 3x3" >&2
+  exit 1
+fi
+
+read -r window_width window_height < <(tmux display-message -p '#{window_width} #{window_height}')
+
+total=$(( rows * cols ))
+min_width=$(( cols * 2 - 1 ))
+min_height=$(( rows * 2 - 1 ))
+
+if (( window_width < min_width || window_height < min_height )); then
+  echo "error: window ${window_width}x${window_height} is too small for ${rows}x${cols}" >&2
+  exit 1
+fi
+
+cwd=$(tmux display-message -p '#{pane_current_path}')
+current_pane_id=$(tmux display-message -p '#{pane_id}')
+
+tmux kill-pane -a
+
+# Create remaining panes as thin vertical strips. Using -l 1 avoids tmux
+# refusing splits before even-panes resizes the final grid.
+for ((i=1; i<total; i++)); do
+  tmux split-window -h -l 1 -d -c "$cwd" 'exec zsh -l'
+done
+
+"$EVEN_PANES" "${rows}x${cols}"
+
+tmux select-pane -t "$current_pane_id"

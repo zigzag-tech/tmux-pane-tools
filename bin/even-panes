@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# Even out tmux panes in the current window.
+# Usage: even-panes [h|v|t|ROWSxCOLS]
+#   no arg = smart grid
+#   h      = even-horizontal
+#   v      = even-vertical
+#   t      = tiled
+#   2x3    = force a 2-row, 3-column grid
+
+if [ -z "$TMUX" ]; then
+  echo "Not in a tmux session." >&2
+  exit 1
+fi
+
+usage() {
+  echo "Usage: even-panes [h|v|t|ROWSxCOLS]" >&2
+  exit 1
+}
+
+# Fix shrunk working area (dots filling unused space): clear any per-window
+# manual size pin, detach other clients on this session, then resize the
+# window to fit the current client.
+tmux set-window-option -u window-size 2>/dev/null || true
+tmux detach-client -a 2>/dev/null || true
+tmux resize-window -A 2>/dev/null || true
+
+case "${1:-auto}" in
+  h) tmux select-layout even-horizontal ;;
+  v) tmux select-layout even-vertical ;;
+  t) tmux select-layout tiled ;;
+  auto) ;;
+  ''|*[!0-9xX]*|*x|x*) usage ;;
+  *) ;;
+esac
+
+if [[ "${1:-auto}" == "h" || "${1:-auto}" == "v" || "${1:-auto}" == "t" ]]; then
+  exit $?
+fi
+
+panes=()
+while IFS= read -r pane; do
+  panes+=("$pane")
+done < <(tmux list-panes -F '#{pane_id}')
+pane_count=${#panes[@]}
+
+if (( pane_count <= 1 )); then
+  exit 0
+fi
+
+read -r window_width window_height < <(tmux display-message -p '#{window_width} #{window_height}')
+
+if [[ "${1:-auto}" =~ ^([0-9]+)[xX]([0-9]+)$ ]]; then
+  rows=${BASH_REMATCH[1]}
+  cols=${BASH_REMATCH[2]}
+  if (( rows < 1 || cols < 1 )); then
+    usage
+  fi
+else
+  read -r rows cols < <(
+    awk -v n="$pane_count" -v w="$window_width" -v h="$window_height" '
+      BEGIN {
+        targetPaneAspect = 2.0
+        bestScore = 1000000000
+
+        for (r = 1; r <= n; r++) {
+          c = int((n + r - 1) / r)
+          paneH = (h - (r - 1)) / r
+
+          if (paneH < 1) {
+            continue
+          }
+
+          remaining = n
+          aspectPenalty = 0
+          worstAspectPenalty = 0
+
+          for (row = 0; row < r; row++) {
+            rowsLeft = r - row
+            rowPanes = int((remaining + rowsLeft - 1) / rowsLeft)
+            paneW = (w - (rowPanes - 1)) / rowPanes
+
+            if (paneW < 1) {
+              aspectPenalty = 1000000000
+              break
+            }
+
+            aspect = paneW / paneH
+            rowPenalty = log(aspect / targetPaneAspect)
+            if (rowPenalty < 0) {
+              rowPenalty = -rowPenalty
+            }
+            aspectPenalty += rowPenalty
+            if (rowPenalty > worstAspectPenalty) {
+              worstAspectPenalty = rowPenalty
+            }
+            remaining -= rowPanes
+          }
+
+          aspectPenalty = aspectPenalty / r
+          shapePenalty = (r > c ? r - c : c - r) * 0.35
+          score = aspectPenalty * 10 + worstAspectPenalty * 4 + shapePenalty
+
+          if (score < bestScore) {
+            bestScore = score
+            bestRows = r
+            bestCols = c
+          }
+        }
+
+        print bestRows, bestCols
+      }
+    '
+  )
+fi
+
+if (( rows * cols < pane_count )); then
+  echo "Grid ${rows}x${cols} has $(( rows * cols )) slots for ${pane_count} panes." >&2
+  exit 1
+fi
+
+if (( window_width < cols * 2 - 1 || window_height < rows * 2 - 1 )); then
+  echo "Window ${window_width}x${window_height} is too small for ${rows}x${cols}." >&2
+  exit 1
+fi
+
+layout_checksum() {
+  perl -e '
+    my $s = shift;
+    my $c = 0;
+    for my $ch (split //, $s) {
+      $c = (($c >> 1) + (($c & 1) << 15)) & 0xffff;
+      $c = ($c + ord($ch)) & 0xffff;
+    }
+    printf "%04x,%s\n", $c, $s;
+  ' "$1"
+}
+
+distribute() {
+  local total=$1
+  local count=$2
+  local separators=$(( count - 1 ))
+  local usable=$(( total - separators ))
+  local base=$(( usable / count ))
+  local extra=$(( usable % count ))
+  local i size
+
+  for (( i = 0; i < count; i++ )); do
+    size=$base
+    if (( i < extra )); then
+      size=$(( size + 1 ))
+    fi
+    printf '%s\n' "$size"
+  done
+}
+
+build_row() {
+  local row_index=$1
+  local row_top=$2
+  local row_height=$3
+  local start_index=$4
+  local row_panes=$5
+  local -a widths
+  local x=0
+  local i pane_id item body
+
+  widths=()
+  while IFS= read -r width; do
+    widths+=("$width")
+  done < <(distribute "$window_width" "$row_panes")
+
+  for (( i = 0; i < row_panes; i++ )); do
+    pane_id=${panes[$(( start_index + i ))]#%}
+    item="${widths[$i]}x${row_height},${x},${row_top},${pane_id}"
+    if [[ -n "$body" ]]; then
+      body="${body},${item}"
+    else
+      body="$item"
+    fi
+    x=$(( x + widths[$i] + 1 ))
+  done
+
+  if (( row_panes == 1 )); then
+    printf '%s' "$body"
+  else
+    printf '%sx%s,0,%s{%s}' "$window_width" "$row_height" "$row_top" "$body"
+  fi
+}
+
+heights=()
+while IFS= read -r height; do
+  heights+=("$height")
+done < <(distribute "$window_height" "$rows")
+layout_body="${window_width}x${window_height},0,0"
+
+if (( rows == 1 )); then
+  layout_body="${layout_body}{$(build_row 0 0 "${heights[0]}" 0 "$pane_count")}"
+else
+  y=0
+  next_pane=0
+  row_body=
+  for (( r = 0; r < rows; r++ )); do
+    if (( next_pane >= pane_count )); then
+      break
+    fi
+
+    rows_left=$(( rows - r ))
+    panes_left=$(( pane_count - next_pane ))
+    row_panes=$(( (panes_left + rows_left - 1) / rows_left ))
+    if (( row_panes > cols )); then
+      row_panes=$cols
+    fi
+
+    item=$(build_row "$r" "$y" "${heights[$r]}" "$next_pane" "$row_panes")
+    if [[ -n "$row_body" ]]; then
+      row_body="${row_body},${item}"
+    else
+      row_body="$item"
+    fi
+    next_pane=$(( next_pane + row_panes ))
+    y=$(( y + heights[$r] + 1 ))
+  done
+  layout_body="${layout_body}[${row_body}]"
+fi
+
+layout=$(layout_checksum "$layout_body")
+tmux select-layout "$layout"

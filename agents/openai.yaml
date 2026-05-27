@@ -1,0 +1,7 @@
+interface:
+  display_name: "tmux Pane Tools"
+  short_description: "Install and use tmux pane utilities"
+  default_prompt: "Use $tmux-pane-tools to install and operate the tmux layout, even-panes, and rename utilities."
+
+policy:
+  allow_implicit_invocation: true
